@@ -3,11 +3,12 @@ import json
 import pyrealsense2 as rs
 import numpy as np
 import cv2
-import open3d as o3d
 import copy
 import time
 from helpers import *
 import os
+
+from util.pclib import passthroughfilter
 
 
 def scan_body():
@@ -38,11 +39,14 @@ def rs_scan():
     config = rs.config()
     config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
     config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
-    config.enable_stream(rs.stream.accel)
-    config.enable_stream(rs.stream.gyro)
+    # config the IMU
+    config.enable_stream(rs.stream.accel) # rs.format.motion_xyz32f, 250
+    config.enable_stream(rs.stream.gyro) # rs.format.motion_xyz32f, 200
+
     pipeline.start(config)
     i=1
     try:
+        i =  10
         while True:
     
             # Wait for a coherent pair of frames: depth and color
@@ -51,7 +55,12 @@ def rs_scan():
             depth_frame = frames.get_depth_frame()
             
             color_frame = frames.get_color_frame()
-
+            accel = frames[2].as_motion_frame().get_motion_data()
+            gyro = frames[3].as_motion_frame().get_motion_data()
+            
+            print(accel)
+            print(gyro)
+            
             depth_intrin = depth_frame.profile.as_video_stream_profile().intrinsics
             profile = frames.get_profile()
             if not depth_frame or not color_frame:
@@ -63,7 +72,8 @@ def rs_scan():
             color_image = np.asanyarray(color_frame.get_data())
 
             key = cv2.waitKey(1)
-            if key == ord("a"):
+            
+            if i > 0:
                 print("type of depth_image:",type(depth_image))
                 print("shape of depth_image:",depth_image.shape)
 
@@ -87,38 +97,42 @@ def rs_scan():
                         pinhole_camera_intrinsic
                     )
 
-                o3d.io.write_point_cloud("/home/lt/Downloads/instance-segmentation-master/multiple_camera/1.ply", o3d_result)
+                pcd_pass = passthroughfilter(o3d_result, 'z', 0.01, 1)
+                o3d.visualization.draw_geometries([pcd_pass])
+                data_name = './data/' + str(i) + '.ply'
+                o3d.io.write_point_cloud(data_name, pcd_pass, write_ascii=True)
 
-                #ply to pcd
-                mesh_ply = o3d.io.read_triangle_mesh("/home/lt/Downloads/instance-segmentation-master/multiple_camera/1.ply")
-                mesh_ply.compute_vertex_normals()
+                # #ply to pcd
+                # mesh_ply = o3d.io.read_triangle_mesh("./data/1.ply")
+                # mesh_ply.compute_vertex_normals()
 
-                # V_mesh 为ply网格的顶点坐标序列，shape=(n,3)，这里n为此网格的顶点总数，其实就是浮点型的x,y,z三个浮点值组成的三维坐标
-                V_mesh = np.asarray(mesh_ply.vertices)
+                # # V_mesh 为ply网格的顶点坐标序列，shape=(n,3)，这里n为此网格的顶点总数，其实就是浮点型的x,y,z三个浮点值组成的三维坐标
+                # V_mesh = np.asarray(mesh_ply.vertices)
 
-                print("ply info:", mesh_ply)
-                print("ply vertices shape:", V_mesh.shape)
+                # print("ply info:", mesh_ply)
+                # print("ply vertices shape:", V_mesh.shape)
                 # o3d.visualization.draw_geometries([mesh_ply], window_name="ply", mesh_show_wireframe=True)
 
-                # ply -> stl
-                mesh_stl = o3d.geometry.TriangleMesh()
-                mesh_stl.vertices = o3d.utility.Vector3dVector(V_mesh)
+                # # ply -> stl
+                # mesh_stl = o3d.geometry.TriangleMesh()
+                # mesh_stl.vertices = o3d.utility.Vector3dVector(V_mesh)
 
-                mesh_stl.compute_vertex_normals()
-                # print("stl info:", mesh_stl)
+                # mesh_stl.compute_vertex_normals()
+                # # print("stl info:", mesh_stl)
                 # o3d.visualization.draw_geometries([mesh_stl], window_name="stl")
-                o3d.io.write_triangle_mesh("/home/lt/Downloads/instance-segmentation-master/multiple_camera/1.stl", mesh_stl)
+                # o3d.io.write_triangle_mesh("./data/1.stl", mesh_stl)
 
-                # stl/ply -> pcd
-                pcd = o3d.geometry.PointCloud()
-                pcd.points = o3d.utility.Vector3dVector(V_mesh)
-                print("pcd info:", pcd)
-                print("type of pcd:", type(pcd))
-                # print("shape of pcd:", pcd.shape)
-                o3d.visualization.draw_geometries([pcd], window_name="pcd")
+                # # stl/ply -> pcd
+                # pcd = o3d.geometry.PointCloud()
+                # pcd.points = o3d.utility.Vector3dVector(V_mesh)
+                # print("pcd info:", pcd)
+                # print("type of pcd:", type(pcd))
+                # # print("shape of pcd:", pcd.shape)
+                # o3d.visualization.draw_geometries([pcd], window_name="pcd")
 
-                # save pcd
-                o3d.io.write_point_cloud("/home/lt/Downloads/instance-segmentation-master/multiple_camera/1.pcd", pcd)
+                # # save pcd
+                # o3d.io.write_point_cloud("./data/1.pcd", pcd)
+                i-=1
 
             # Apply colormap on depth image (image must be converted to 8-bit per pixel first)
             depth_colormap = cv2.applyColorMap(cv2.convertScaleAbs(depth_image, alpha=0.03), cv2.COLORMAP_JET)
@@ -127,8 +141,8 @@ def rs_scan():
             images = np.hstack((color_image, depth_colormap))
     
             # Show images
-            cv2.namedWindow('RealSense', cv2.WINDOW_AUTOSIZE)
-            cv2.imshow('RealSense', images)
+            # cv2.namedWindow('RealSense', cv2.WINDOW_AUTOSIZE)
+            # cv2.imshow('RealSense', images)
     
             key = cv2.waitKey(1)
             # Press esc or 'q' to close the image window
@@ -144,6 +158,5 @@ def rs_scan():
 
 
 
-
 if __name__ == '__main__':
-    scan_body()
+    rs_scan()
